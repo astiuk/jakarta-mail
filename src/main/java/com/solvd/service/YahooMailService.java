@@ -1,5 +1,6 @@
 package com.solvd.service;
 
+import com.solvd.enums.EmailService;
 import jakarta.mail.*;
 import jakarta.mail.internet.MimeMessage;
 
@@ -12,13 +13,16 @@ public class YahooMailService {
     private final String password;
     private final Properties properties;
 
-    public YahooMailService(String username, String password) {
+    public YahooMailService(EmailService emailService, String username, String password) {
         this.username = username;
         this.password = password;
         this.properties = new Properties();
         this.properties.put("mail.store.protocol", "imap");
         this.properties.put("mail.imaps.auth", "true");
-        this.properties.put("mail.imaps.host", "imap.mail.yahoo.com");
+        switch (emailService) {
+            case YAHOO -> this.properties.put("mail.imaps.host", "imap.mail.yahoo.com");
+            case GMAIL -> this.properties.put("mail.imaps.host", "imap.gmail.com");
+        }
         this.properties.put("mail.imaps.port", "993");
     }
 
@@ -58,6 +62,41 @@ public class YahooMailService {
             throw new RuntimeException(e);
         }
         return text;
+    }
+
+    public String waitForNewEmailByTitle(String title, long pollingIntervalMillis, int timeoutMinutes) {
+        long startTime = System.currentTimeMillis();
+        long endTime = startTime + timeoutMinutes * 60 * 1000;
+        int topN = 5;
+
+        while (System.currentTimeMillis() < endTime) {
+            try {
+                Session session = createSession();
+                Store store = connectToStore(session);
+                Folder folder = openInbox(store);
+                int count = folder.getMessageCount();
+                int start = Math.max(count - topN + 1, 1);
+
+                for (int i = start; i <= count; i++) {
+                    Message message = folder.getMessage(i);
+                    if (message.getSubject().contains(title)) {
+                        String text = getText((MimeMessage) message);
+                        folder.close(false);
+                        store.close();
+                        return text;
+                    }
+                }
+
+                folder.close(false);
+                store.close();
+
+                Thread.sleep(pollingIntervalMillis);
+            } catch (MessagingException | IOException | InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        throw new RuntimeException("Timeout reached while waiting for email with title: " + title);
     }
 
     private String getText(Part p) throws
